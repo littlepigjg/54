@@ -123,10 +123,7 @@ export const api = {
     if (params.ids.length === 0) {
       throw new Error("请至少选择一个二维码");
     }
-    const q = new URLSearchParams();
-    q.set("format", params.format);
-    q.set("ids", params.ids.join(","));
-    return fetch(`${API_BASE}/export?${q.toString()}`, {
+    return fetch(`${API_BASE}/export`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),

@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express'
 import { BatchService } from '../services/BatchService.js'
-import { ExportService } from '../services/ExportService.js'
+import { ExportService } from '../modules/export/index.js'
 import type { BatchGenerateRequest } from '../../shared/types.js'
 
 const router = Router()

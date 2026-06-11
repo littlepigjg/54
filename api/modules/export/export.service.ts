@@ -1,8 +1,8 @@
 import archiver from 'archiver'
-import { QrService } from './QrService.js'
-import { StatsService } from './StatsService.js'
-import { qrCodeRepository } from '../repositories/QrCodeRepository.js'
-import type { QrCode, ScanRecord } from '../../shared/types.js'
+import { QrService } from '../../services/QrService.js'
+import { StatsService } from '../../services/StatsService.js'
+import { qrCodeRepository } from '../../repositories/QrCodeRepository.js'
+import type { QrCode, ScanRecord } from '../../../shared/types.js'
 import type { Response } from 'express'
 
 function escapeCsv(value: unknown): string {
@@ -20,19 +20,32 @@ function buildCsv(headers: string[], rows: (string | number)[][]): string {
   return head + (body ? '\n' + body : '')
 }
 
+async function resolveQrCodes(ids?: string[]): Promise<QrCode[]> {
+  if (ids && ids.length > 0) {
+    const result: QrCode[] = []
+    for (const id of ids) {
+      const qr = await qrCodeRepository.getById(id)
+      if (qr) result.push(qr)
+    }
+    return result
+  }
+  return qrCodeRepository.getAll()
+}
+
+function safeFilename(baseName: string, usedNames: Map<string, number>, ext: string): string {
+  const safe = baseName.replace(/[<>:"/\\|?*]/g, '_')
+  let filename = `${safe}.${ext}`
+  const count = usedNames.get(filename) || 0
+  if (count > 0) {
+    filename = `${safe}_${count}.${ext}`
+  }
+  usedNames.set(filename, count + 1)
+  return filename
+}
+
 export const ExportService = {
   async pipeQrCodePngsZip(res: Response, qrcodeIds?: string[]): Promise<void> {
-    let qrcodes: QrCode[]
-    if (qrcodeIds && qrcodeIds.length > 0) {
-      qrcodes = []
-      for (const id of qrcodeIds) {
-        const qr = await qrCodeRepository.getById(id)
-        if (qr) qrcodes.push(qr)
-      }
-    } else {
-      qrcodes = await qrCodeRepository.getAll()
-    }
-
+    const qrcodes = await resolveQrCodes(qrcodeIds)
     const archive = archiver('zip', { zlib: { level: 9 } })
     archive.on('error', (err) => {
       if (!res.headersSent) res.status(500).json({ success: false, error: err.message })
@@ -41,37 +54,19 @@ export const ExportService = {
 
     const usedNames = new Map<string, number>()
     for (const qr of qrcodes) {
-      let baseName = qr.name || qr.shortCode
-      baseName = baseName.replace(/[<>:"/\\|?*]/g, '_')
-      let filename = `${baseName}.png`
-      const count = usedNames.get(filename) || 0
-      if (count > 0) {
-        filename = `${baseName}_${count}.png`
-      }
-      usedNames.set(filename, count + 1)
+      const filename = safeFilename(qr.name || qr.shortCode, usedNames, 'png')
       try {
         const buf = await QrService.generatePngBuffer(qr)
         archive.append(buf, { name: filename })
       } catch {
-        // 跳过失败的
+        // skip failed
       }
     }
-
     await archive.finalize()
   },
 
   async buildStatsCsv(qrcodeIds?: string[]): Promise<string> {
-    let qrcodes: QrCode[]
-    if (qrcodeIds && qrcodeIds.length > 0) {
-      qrcodes = []
-      for (const id of qrcodeIds) {
-        const qr = await qrCodeRepository.getById(id)
-        if (qr) qrcodes.push(qr)
-      }
-    } else {
-      qrcodes = await qrCodeRepository.getAll()
-    }
-
+    const qrcodes = await resolveQrCodes(qrcodeIds)
     const headers = [
       'ID',
       '名称',
@@ -112,7 +107,6 @@ export const ExportService = {
       const result = await StatsService.listScanRecords(1, 1000000)
       records = result.items
     }
-
     const headers = ['ID', '二维码ID', '短码', '时间', 'IP', 'UserAgent', '来源']
     const rows: (string | number)[][] = []
     for (const r of records) {
@@ -142,35 +136,17 @@ export const ExportService = {
     const scansCsv = await this.buildScanRecordsCsv(qrcodeIds)
     archive.append(scansCsv, { name: 'scan_records.csv' })
 
-    let qrcodes: QrCode[]
-    if (qrcodeIds && qrcodeIds.length > 0) {
-      qrcodes = []
-      for (const id of qrcodeIds) {
-        const qr = await qrCodeRepository.getById(id)
-        if (qr) qrcodes.push(qr)
-      }
-    } else {
-      qrcodes = await qrCodeRepository.getAll()
-    }
-
+    const qrcodes = await resolveQrCodes(qrcodeIds)
     const usedNames = new Map<string, number>()
     for (const qr of qrcodes) {
-      let baseName = qr.name || qr.shortCode
-      baseName = baseName.replace(/[<>:"/\\|?*]/g, '_')
-      let filename = `qrcodes/${baseName}.png`
-      const count = usedNames.get(filename) || 0
-      if (count > 0) {
-        filename = `qrcodes/${baseName}_${count}.png`
-      }
-      usedNames.set(filename, count + 1)
+      const filename = safeFilename(qr.name || qr.shortCode, usedNames, 'png')
       try {
         const buf = await QrService.generatePngBuffer(qr)
-        archive.append(buf, { name: filename })
+        archive.append(buf, { name: `qrcodes/${filename}` })
       } catch {
-        // 跳过
+        // skip
       }
     }
-
     await archive.finalize()
   },
 }
