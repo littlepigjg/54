@@ -68,11 +68,22 @@ router.get('/:id/download', async (req: Request, res: Response): Promise<void> =
     }
     const safeName = task.name.replace(/[<>:"/\\|?*]/g, '_') || `batch_${task.id}`
     const filename = `${safeName}.zip`
+    const ids = task.qrcodeIds && task.qrcodeIds.length > 0 ? task.qrcodeIds : undefined
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[batch download] task=${task.id}, name=${task.name}, idsCount=${ids?.length ?? 'all'}`)
+    }
+
+    if (ids !== undefined && ids.length === 0) {
+      res.status(400).json({ success: false, error: '该批量任务没有生成任何二维码' })
+      return
+    }
+
     res.setHeader('Content-Type', 'application/zip')
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`)
-    const ids = task.qrcodeIds && task.qrcodeIds.length > 0 ? task.qrcodeIds : undefined
     await ExportService.pipeQrCodePngsZip(res, ids)
   } catch (err) {
+    console.error('[batch download] error:', err)
     if (!res.headersSent) {
       res.status(500).json({ success: false, error: (err as Error).message })
     }

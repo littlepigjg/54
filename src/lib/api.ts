@@ -116,8 +116,17 @@ export const api = {
     });
   },
 
-  exportQrCodes(params: { ids: string[]; format: "zip" | "csv" }): Promise<Blob> {
-    return fetch(`${API_BASE}/export`, {
+  exportQrCodes(params: { ids: string[]; format: "zip" | "csv" | "scans_csv" | "full" }): Promise<Blob> {
+    if (!Array.isArray(params.ids)) {
+      throw new Error("ids 必须是数组");
+    }
+    if (params.ids.length === 0) {
+      throw new Error("请至少选择一个二维码");
+    }
+    const q = new URLSearchParams();
+    q.set("format", params.format);
+    q.set("ids", params.ids.join(","));
+    return fetch(`${API_BASE}/export?${q.toString()}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
