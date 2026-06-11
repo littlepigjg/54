@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express'
 import { BatchService } from '../services/BatchService.js'
+import { ExportService } from '../services/ExportService.js'
 import type { BatchGenerateRequest } from '../../shared/types.js'
 
 const router = Router()
@@ -8,19 +9,6 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
   try {
     const data = await BatchService.list()
     res.json({ success: true, data })
-  } catch (err) {
-    res.status(500).json({ success: false, error: (err as Error).message })
-  }
-})
-
-router.get('/:id', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const task = await BatchService.getById(req.params.id)
-    if (!task) {
-      res.status(404).json({ success: false, error: 'Batch task not found' })
-      return
-    }
-    res.json({ success: true, data: task })
   } catch (err) {
     res.status(500).json({ success: false, error: (err as Error).message })
   }
@@ -62,6 +50,43 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     }
     const task = await BatchService.create(body)
     res.status(201).json({ success: true, data: task })
+  } catch (err) {
+    res.status(500).json({ success: false, error: (err as Error).message })
+  }
+})
+
+router.get('/:id/download', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const task = await BatchService.getById(req.params.id)
+    if (!task) {
+      res.status(404).json({ success: false, error: 'Batch task not found' })
+      return
+    }
+    if (task.status !== 'done') {
+      res.status(400).json({ success: false, error: `任务尚未完成，当前状态: ${task.status}` })
+      return
+    }
+    const safeName = task.name.replace(/[<>:"/\\|?*]/g, '_') || `batch_${task.id}`
+    const filename = `${safeName}.zip`
+    res.setHeader('Content-Type', 'application/zip')
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`)
+    const ids = task.qrcodeIds && task.qrcodeIds.length > 0 ? task.qrcodeIds : undefined
+    await ExportService.pipeQrCodePngsZip(res, ids)
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: (err as Error).message })
+    }
+  }
+})
+
+router.get('/:id', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const task = await BatchService.getById(req.params.id)
+    if (!task) {
+      res.status(404).json({ success: false, error: 'Batch task not found' })
+      return
+    }
+    res.json({ success: true, data: task })
   } catch (err) {
     res.status(500).json({ success: false, error: (err as Error).message })
   }

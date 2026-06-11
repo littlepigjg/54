@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Layers3,
   Play,
@@ -30,7 +30,9 @@ export default function BatchGenerator() {
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [task, setTask] = useState<BatchTask | null>(null);
+  const [polling, setPolling] = useState(false);
   const [error, setError] = useState<string>("");
+  const pollTimerRef = useRef<number | null>(null);
 
   const values = useMemo(() => {
     return valuesText
@@ -51,6 +53,48 @@ export default function BatchGenerator() {
     });
   }, [values, baseUrl, paramName]);
 
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current) {
+        window.clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!task || task.status === "done" || task.status === "failed") {
+      if (pollTimerRef.current) {
+        window.clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      setPolling(false);
+      return;
+    }
+    if (pollTimerRef.current) return;
+    setPolling(true);
+    pollTimerRef.current = window.setInterval(async () => {
+      try {
+        const latest = await api.getBatchTask(task.id);
+        setTask(latest);
+        const pct = latest.totalCount > 0 ? Math.round((latest.successCount / latest.totalCount) * 100) : 0;
+        setProgress(pct);
+        if (latest.status === "done" || latest.status === "failed") {
+          if (pollTimerRef.current) {
+            window.clearInterval(pollTimerRef.current);
+            pollTimerRef.current = null;
+          }
+          setPolling(false);
+          if (latest.status === "failed") {
+            setError("批量任务执行失败");
+          }
+        }
+      } catch {
+        // 轮询失败不中断
+      }
+    }, 1500);
+  }, [task]);
+
   const canGenerate =
     name.trim().length > 0 &&
     baseUrl.trim().length > 0 &&
@@ -64,14 +108,6 @@ export default function BatchGenerator() {
     setError("");
     setTask(null);
 
-    const total = values.length;
-    const progressInterval = setInterval(() => {
-      setProgress((p) => {
-        const next = p + Math.random() * 8;
-        return next >= 95 ? 95 : next;
-      });
-    }, 200);
-
     try {
       const payload: BatchGenerateRequest = {
         name,
@@ -80,24 +116,22 @@ export default function BatchGenerator() {
         paramValues: values,
       };
       const created = await api.createBatchTask(payload);
-      clearInterval(progressInterval);
-      setProgress(100);
       setTask(created);
+      setProgress(created.totalCount > 0 ? Math.round((created.successCount / created.totalCount) * 100) : 0);
     } catch (err: unknown) {
-      clearInterval(progressInterval);
       const msg = err instanceof Error ? err.message : "批量生成失败";
       setError(msg);
     } finally {
-      clearInterval(progressInterval);
-      if (progress < 100 && !task) {
-        setTimeout(() => setProgress(0), 500);
-      }
       setGenerating(false);
     }
   };
 
   const handleDownloadZip = async () => {
     if (!task) return;
+    if (task.status !== "done") {
+      alert("任务尚未完成，请等待生成完毕后再下载");
+      return;
+    }
     try {
       const blob = await api.downloadBatchZip(task.id);
       const url = URL.createObjectURL(blob);
@@ -206,32 +240,80 @@ export default function BatchGenerator() {
                 )}
 
                 {task ? (
-                  <div className="p-4 rounded-xl bg-success-500/10 border border-success-500/30">
-                    <div className="flex items-center gap-2 text-success-500 font-medium mb-3">
-                      <CheckCircle2 className="w-5 h-5" />
-                      生成成功！
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 text-sm mb-4">
-                      <div>
-                        <span className="text-dark-400">任务ID：</span>
-                        <span className="text-white font-mono">{task.id.slice(0, 12)}...</span>
+                  task.status === "done" ? (
+                    <div className="p-4 rounded-xl bg-success-500/10 border border-success-500/30">
+                      <div className="flex items-center gap-2 text-success-500 font-medium mb-3">
+                        <CheckCircle2 className="w-5 h-5" />
+                        生成成功！共完成 {task.successCount} / {task.totalCount} 个二维码
                       </div>
-                      <div>
-                        <span className="text-dark-400">成功数量：</span>
-                        <span className="text-success-500 font-semibold">
-                          {task.successCount} / {task.totalCount}
+                      <div className="grid grid-cols-2 gap-3 text-sm mb-4">
+                        <div>
+                          <span className="text-dark-400">任务ID：</span>
+                          <span className="text-white font-mono">{task.id.slice(0, 12)}...</span>
+                        </div>
+                        <div>
+                          <span className="text-dark-400">成功数量：</span>
+                          <span className="text-success-500 font-semibold">
+                            {task.successCount} / {task.totalCount}
+                          </span>
+                        </div>
+                        <div className="col-span-2">
+                          <span className="text-dark-400">任务名称：</span>
+                          <span className="text-white">{task.name}</span>
+                        </div>
+                      </div>
+                      <button onClick={handleDownloadZip} className="btn-success w-full">
+                        <Download className="w-4 h-4" />
+                        下载 ZIP 压缩包（含全部二维码图片）
+                      </button>
+                    </div>
+                  ) : task.status === "failed" ? (
+                    <div className="p-4 rounded-xl bg-danger-500/10 border border-danger-500/30">
+                      <div className="flex items-center gap-2 text-danger-500 font-medium mb-2">
+                        <AlertCircle className="w-5 h-5" />
+                        任务失败
+                      </div>
+                      <p className="text-sm text-dark-300 mb-3">
+                        成功 {task.successCount} / {task.totalCount} 个，请检查参数后重试。
+                      </p>
+                      <button
+                        onClick={() => {
+                          setTask(null);
+                          setProgress(0);
+                        }}
+                        className="btn-secondary w-full"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        重新生成
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-dark-300 flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin text-brand-400" />
+                          {polling ? "后台正在生成二维码，请勿关闭页面..." : "准备中..."}
+                        </span>
+                        <span className="text-brand-400 font-semibold">
+                          {task.successCount} / {task.totalCount} ({Math.round(progress)}%)
                         </span>
                       </div>
-                      <div className="col-span-2">
-                        <span className="text-dark-400">任务名称：</span>
-                        <span className="text-white">{task.name}</span>
+                      <div className="h-2.5 bg-dark-700 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-brand-gradient rounded-full transition-all duration-300 relative"
+                          style={{ width: `${progress}%` }}
+                        >
+                          <div className="absolute inset-0 bg-white/20 animate-pulse" />
+                        </div>
                       </div>
+                      <p className="text-xs text-dark-500">
+                        任务 ID：<span className="font-mono">{task.id}</span> · 状态：
+                        <span className="text-brand-300 ml-1">
+                          {task.status === "running" ? "运行中" : task.status === "pending" ? "等待中" : task.status}
+                        </span>
+                      </p>
                     </div>
-                    <button onClick={handleDownloadZip} className="btn-success w-full">
-                      <Download className="w-4 h-4" />
-                      下载 ZIP 压缩包（含全部二维码图片）
-                    </button>
-                  </div>
+                  )
                 ) : (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between text-sm">

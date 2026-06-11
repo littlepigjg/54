@@ -1,9 +1,9 @@
 import archiver from 'archiver'
-import { PassThrough } from 'node:stream'
 import { QrService } from './QrService.js'
 import { StatsService } from './StatsService.js'
 import { qrCodeRepository } from '../repositories/QrCodeRepository.js'
 import type { QrCode, ScanRecord } from '../../shared/types.js'
+import type { Response } from 'express'
 
 function escapeCsv(value: unknown): string {
   if (value === null || value === undefined) return ''
@@ -21,7 +21,7 @@ function buildCsv(headers: string[], rows: (string | number)[][]): string {
 }
 
 export const ExportService = {
-  async createQrCodePngsZip(qrcodeIds?: string[]): Promise<PassThrough> {
+  async pipeQrCodePngsZip(res: Response, qrcodeIds?: string[]): Promise<void> {
     let qrcodes: QrCode[]
     if (qrcodeIds && qrcodeIds.length > 0) {
       qrcodes = []
@@ -34,8 +34,10 @@ export const ExportService = {
     }
 
     const archive = archiver('zip', { zlib: { level: 9 } })
-    const stream = new PassThrough()
-    archive.pipe(stream)
+    archive.on('error', (err) => {
+      if (!res.headersSent) res.status(500).json({ success: false, error: err.message })
+    })
+    archive.pipe(res)
 
     const usedNames = new Map<string, number>()
     for (const qr of qrcodes) {
@@ -55,8 +57,7 @@ export const ExportService = {
       }
     }
 
-    void archive.finalize()
-    return stream
+    await archive.finalize()
   },
 
   async buildStatsCsv(qrcodeIds?: string[]): Promise<string> {
@@ -128,10 +129,12 @@ export const ExportService = {
     return buildCsv(headers, rows)
   },
 
-  async createFullExportZip(qrcodeIds?: string[]): Promise<PassThrough> {
+  async pipeFullExportZip(res: Response, qrcodeIds?: string[]): Promise<void> {
     const archive = archiver('zip', { zlib: { level: 9 } })
-    const stream = new PassThrough()
-    archive.pipe(stream)
+    archive.on('error', (err) => {
+      if (!res.headersSent) res.status(500).json({ success: false, error: err.message })
+    })
+    archive.pipe(res)
 
     const statsCsv = await this.buildStatsCsv(qrcodeIds)
     archive.append(statsCsv, { name: 'qrcodes_stats.csv' })
@@ -168,7 +171,6 @@ export const ExportService = {
       }
     }
 
-    void archive.finalize()
-    return stream
+    await archive.finalize()
   },
 }
