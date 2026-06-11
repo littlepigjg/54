@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "mq8v3i54d2pq92ia",
+      "name": "????-??",
+      "type": "dynamic",
+      "targetUrl": "https://intranet.example.com/home",
+      "shortCode": "ivyk1cd4",
+      "size": 300,
+      "foreground": "#0F172A",
+      "background": "#FFFFFF",
+      "errorLevel": "M",
+      "enabled": true,
+      "scanCount": 1,
+      "createdAt": "2026-06-11T02:11:51.832Z",
+      "updatedAt": "2026-06-11T02:11:51.832Z"
+    }
+  ]
+}
